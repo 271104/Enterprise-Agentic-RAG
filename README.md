@@ -149,10 +149,4 @@ streamlit run evals/app.py
 
 ---
 
-## Documentation
-
-The detailed architecture and operations guides are not included in this repository copy.
-
----
-
 *Built for High-Scale Enterprise Document Intelligence.*
