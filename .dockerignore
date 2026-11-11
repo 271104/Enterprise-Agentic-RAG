@@ -36,9 +36,12 @@ commands.md
 
 # Data — lives in GCS, not in the container
 DATA/
+processed_data/
 
 # Eval suite — runs locally only, not in Cloud Run
 evals/
+tests/
+.github/
 
 # Streamlit UI — runs locally, not served by Cloud Run
 ui/
@@ -46,6 +49,7 @@ ui/
 # Notebooks & docs — not needed at runtime
 notebooks/
 DOCS/
+docs/
 
 # OS
 .DS_Store

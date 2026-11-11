@@ -1,152 +1,186 @@
-# Enterprise Agentic RAG (Scalable Pipeline)
+# Enterprise Agentic RAG
 
-A production-grade, enterprise-level RAG system built with **LangGraph**, **Portkey LLM Gateway**, and **Gemini Embeddings**. The system distinguishes between technical "True Data" and random "Noisy Data" using semantic re-ranking, history-aware planning, and NeMo Guardrails for input/output safety.
+A reference implementation of a document question-answering service using FastAPI, LangGraph, NeMo Guardrails, Portkey, Groq, Gemini embeddings, Qdrant, and FlashRank. It includes a Streamlit chat UI and an evaluation UI. This repository is an engineering example; it has not been independently assessed or certified for production use.
 
-## Key Features
+## Problem statement
 
-- **Agentic Intelligence**: LangGraph for cyclic reasoning, multi-step planning, and conversation memory.
-- **Guardrails**: NeMo Guardrails gate blocks off-topic, jailbreak, and injection inputs before any retrieval.
-- **LLM Gateway**: Portkey routes all LLM calls with automatic fallback between primary and backup Groq keys.
-- **Enterprise Search**: Qdrant Cloud for high-performance vector search + FlashRank for local semantic reranking.
-- **Gemini Embeddings**: Google `gemini-embedding-2-preview` (3072-dim) via `langchain-google-genai`.
-- **Local Document Parsing**: PDF, HTML, TXT, DOCX, PPTX parsed entirely on-device — no external OCR service.
-- **Observability**: Full trace nesting with **Pydantic Logfire** and **LangSmith** across every agent node.
-- **Evaluation Suite**: RAGAS-powered eval pipeline (6 metrics) with a dedicated Streamlit demo app.
+Teams need a way to retrieve relevant passages from a document collection and use them as context for generated answers. This project demonstrates a small local ingestion flow and a service-backed retrieval flow, with a simple guardrails gate and evaluation tooling.
 
----
+## Key capabilities
 
-## Agent Intelligence Flow
+- Paragraph-aware chunking and local PDF, HTML, text, DOCX, and PPTX parsing.
+- Gemini or local sentence-transformer embeddings, selected explicitly per collection.
+- Qdrant vector retrieval and FlashRank reranking.
+- LangGraph planner, retriever, and responder nodes with in-process conversation checkpoints.
+- FastAPI query and health endpoints; Streamlit chat and evaluation interfaces.
+- Optional Logfire and LangSmith tracing.
+
+Guardrails and retrieval quality depend on model, data, and configuration. The application has no authentication or authorization layer.
+
+## Architecture
 
 ```mermaid
-graph TD
-    User((User)) --> UI[Streamlit UI]
-    UI --> API[FastAPI /query]
-    API --> Guard{NeMo Guardrails}
-    Guard -->|Blocked| UI
-    Guard -->|Pass| Planner{Planner Node}
-    Planner -->|Conversational| Responder[Responder Node]
-    Planner -->|Technical| Retriever[Retriever Node]
-    Retriever --> Reranker[FlashRank Local Reranker]
-    Reranker --> Responder
-    Responder --> UI
-    Responder -.-> Memory[(LangGraph MemorySaver)]
+flowchart LR
+  UI[Streamlit chat] --> API[FastAPI]
+  API --> GR[NeMo Guardrails]
+  GR --> AG[LangGraph planner]
+  AG -->|technical query| Q[Qdrant]
+  Q --> RR[FlashRank]
+  RR --> AG
+  AG --> PK[Portkey gateway]
+  PK --> L[Groq primary / fallback]
+  ING[Local ingestion] --> E[Gemini or local embeddings]
+  E --> Q
+  API -. optional traces .-> OBS[Logfire / LangSmith]
 ```
 
----
+## Technology stack
 
-## Project Structure
+| Area | Components |
+|---|---|
+| API and orchestration | FastAPI, Pydantic, LangGraph |
+| Safety and generation | NeMo Guardrails, Portkey, Groq |
+| Retrieval | Qdrant, Gemini or sentence-transformer embeddings, FlashRank |
+| UI and evaluation | Streamlit, RAGAS |
+| Observability | Optional Logfire and LangSmith |
+| Runtime | Python 3.11, Docker |
+
+## Project structure
 
 ```text
-├── app/
-│   ├── agents/
-│   │   └── nodes/       # Planner, Retriever, Responder LangGraph nodes
-│   ├── gateway/         # Portkey LLM gateway — primary + fallback Groq routing
-│   ├── guardrails/      # NeMo Guardrails input/output filtering
-│   ├── ingestion/
-│   │   ├── chunking/    # Paragraph-based text splitter (1500 char max)
-│   │   └── loaders/     # Local parsers — PDF (pypdf), HTML, TXT, DOCX, PPTX
-│   ├── services/
-│   │   └── retrieval/   # Gemini embeddings + Qdrant search + FlashRank reranking
-│   ├── config.py        # Centralized environment variable management
-│   └── main.py          # FastAPI entrypoint — guardrails gate + /query endpoint
-├── evals/               # RAGAS evaluation suite + Streamlit 3-tab demo
-├── ui/                  # Streamlit chat interface with reasoning step transparency
-├── processed_data/      # Auto-generated — parsed & chunked JSON output per document
-├── docs/                # Architectural and operational guides (11 docs)
-├── DATA/                # Sample datasets (True vs Noisy documentation)
-└── requirements.txt     # Pinned dependencies
+app/       API, agent graph, gateway, guardrails, ingestion and retrieval
+ui/        Streamlit chat interfaces
+evals/     Golden datasets, live pipeline and evaluation UI
+DATA/noisy_data/  Synthetic noise corpus for parser and retrieval demos
+DATA/true_data/   Tracked corpus; rights must be confirmed before public release
+processed_data/   Derived chunks; currently tracked, with future outputs ignored
+tests/     Mocked unit and API tests
+docs/      Setup, API, operations, evaluation and deployment guides
 ```
 
----
+## Prerequisites
 
-## Tech Stack
+- Python 3.11 for local development; Docker for container builds.
+- A Qdrant endpoint and API key.
+- Portkey and Groq credentials for answer generation and guardrails.
+- Gemini API key when using `EMBEDDING_PROVIDER=gemini` (the default).
+- Local embedding dependencies and model download access when using `EMBEDDING_PROVIDER=local`.
 
-| Layer | Technology |
-|-------|-----------|
-| Orchestration | LangChain + LangGraph |
-| LLMs | Groq (Llama 3.3 70B) via **Portkey** gateway |
-| Guardrails | NeMo Guardrails |
-| Vector DB | Qdrant Cloud |
-| Reranking | FlashRank (local, zero-latency) |
-| Embeddings | Gemini `gemini-embedding-2-preview` (3072-dim) |
-| Document Parsing | pypdf + pdfplumber (local, no OCR service) |
-| Observability | Pydantic Logfire + LangSmith |
-| Evaluation | RAGAS + custom Tool Correctness (Jaccard) |
+## Environment setup
 
----
+Copy `.env.example` to `.env` and set the required values. `.env` is ignored by Git; never commit credentials. Required backend settings are `QDRANT_CLUSTER_ENDPOINT`, `PORTKEY_API_KEY`, `GROQ_API_KEY`, and, with the default embedding provider, `GEMINI_API_KEY`. Configure the Portkey aliases `rag` and `brag` with the primary and fallback Groq routes. `LOGFIRE_TOKEN` and LangSmith variables are optional. Set `LANGSMITH_TRACING=false` unless tracing is intentionally enabled.
 
-## Getting Started
-
-### 1. Install dependencies
+## Installation
 
 ```powershell
-python -m venv tenvv
-.\tenvv\Scripts\activate
-pip install -r requirements.txt
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### 2. Configure environment
+## Document ingestion
 
-Create a `.env` file with the following keys:
-
-```env
-# Groq Reasoning Engine (Llama 3.3)
-GROQ_API_KEY = ""
-GROQ_FALLBACK_API_KEY = ""          # second Groq key, or same as primary
-
-# Portkey LLM Gateway
-PORTKEY_API_KEY = ""
-
-# Qdrant Vector DB
-QDRANT_API_KEY = ""
-QDRANT_CLUSTER_ENDPOINT = ""        # e.g. https://your-cluster.cloud.qdrant.io:6333
-
-# Pydantic Logfire Observability
-LOGFIRE_TOKEN = ""
-
-# LangSmith
-LANGSMITH_TRACING = true
-LANGSMITH_ENDPOINT = https://api.smith.langchain.com
-LANGSMITH_API_KEY = ""
-LANGSMITH_PROJECT = ""
-
-# Streamlit UI → FastAPI
-BACKEND_URL = ""                    # e.g. http://localhost:8000
-
-# Eval judge LLM (keep separate from main key to avoid rate-limiting the live app)
-JUDGE_GROQ = ""
-
-# Gemini Embeddings
-GEMINI_API_KEY = ""
-```
-
-### 3. Run data ingestion
-
-Parses all documents in `DATA/`, chunks them, saves metadata to `processed_data/`, and indexes vectors into Qdrant.
+Ingest the supported documents in `DATA/` and index them in the configured Qdrant collection:
 
 ```powershell
-python -m app.ingestion.processor DATA --wipe
+python -m app.ingestion.processor DATA/noisy_data noisy
 ```
 
-> Pass `--wipe` to drop and recreate the Qdrant collection. Omit it to append to an existing collection.
-
-### 4. Launch the app
+Use `--wipe` only when you intend to delete and recreate the configured collection:
 
 ```powershell
-# Terminal 1 — FastAPI backend
-uvicorn app.main:app --reload --port 8000
+python -m app.ingestion.processor DATA/noisy_data noisy --wipe
+```
 
-# Terminal 2 — Streamlit UI
+Ingestion writes parsed chunks to `processed_data/` and creates Qdrant points. The local embedding model must match the collection’s embedding provider and vector dimension. See [data handling](docs/OPERATIONS.md#data-and-retention).
+
+## Running the backend
+
+```powershell
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+The service validates required settings at startup. Liveness is at `/health/live`; configuration readiness is at `/health/ready`.
+
+## Running the frontend
+
+In a second terminal:
+
+```powershell
+$env:BACKEND_URL = "http://127.0.0.1:8000"
 streamlit run ui/app.py
 ```
 
-### 5. Run the eval suite (optional)
+The Streamlit session ID is used as the conversation ID. The backend’s memory is process-local and is lost on restart.
+
+## API examples
 
 ```powershell
-# Requires the FastAPI backend running on :8000
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/query `
+  -ContentType 'application/json' `
+  -Body '{"q":"How does the documented autoscaling flow work?"}'
+```
+
+`q` must contain 1–8,000 characters. An optional `thread_id` (up to 128 characters) continues an existing conversation; callers should keep it private and unique. The response includes `question`, `answer`, `thought_process`, `status`, `sources`, and a request ID. See [API reference](docs/API.md).
+
+## Docker setup
+
+Build and run the backend image (provide secrets through your deployment environment, not image build arguments):
+
+```powershell
+docker build -t enterprise-agentic-rag .
+docker run --rm -p 8080:8080 --env-file .env enterprise-agentic-rag
+```
+
+The image runs as a non-root user and exposes a liveness health check. It contains the API only; the Streamlit UI and ingestion/evaluation commands run locally. See [deployment guide](docs/DEPLOYMENT.md).
+
+## Evaluation instructions
+
+Run the backend, then launch:
+
+```powershell
 streamlit run evals/app.py
 ```
 
----
+The live pipeline contacts the configured API; LLM-based RAGAS metrics can incur provider costs. Do not interpret the checked-in golden data as measured performance. See [evaluation guide](docs/EVALUATION.md).
 
-*Built for High-Scale Enterprise Document Intelligence.*
+## Testing
+
+Install development dependencies with `requirements.txt`, then run:
+
+```powershell
+python -m pytest
+ruff check app evals ui tests
+ruff format --check app evals ui tests
+```
+
+Tests mock external services and do not require paid API credentials. CI also audits the production dependency manifest and builds the Docker image.
+
+## Security considerations
+
+- This sample has no authentication, authorization, or tenant isolation. Do not expose it to untrusted networks without adding and reviewing an access-control design.
+- Treat prompts, source documents, model traffic, and optional traces as potentially sensitive. Review provider data handling and disable tracing where inappropriate.
+- Keep `.env` and credentials out of Git; rotate any credential that was accidentally exposed.
+- The guardrails are a model-assisted filter, not a security boundary.
+- Review the sample corpus’ redistribution rights before publishing or redistributing it. See [SECURITY.md](SECURITY.md).
+- No project license has been selected pending source and data rights review; see [LICENSING.md](LICENSING.md).
+
+## Limitations
+
+- Conversation state is in process memory, has no expiry policy, and is lost at restart.
+- Qdrant and model providers must be provisioned separately.
+- The API readiness endpoint validates configuration, not provider availability.
+- Chunking uses character counts and does not preserve page-level citations.
+- The checked-in sample corpus may include works without confirmed redistribution rights.
+
+## Roadmap
+
+- Add a rights-reviewed, redistributable demonstration corpus.
+- Improve page/source attribution and ingestion reporting.
+- Add provider health checks and bounded conversation retention.
+- Extend mocked tests and document measured evaluation runs when executed.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull request guidance.

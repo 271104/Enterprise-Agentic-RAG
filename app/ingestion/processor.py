@@ -3,6 +3,7 @@ import sys
 import uuid
 import json
 import logfire
+from functools import lru_cache
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -14,20 +15,21 @@ from app.ingestion.loaders.html import parse_html
 from app.ingestion.loaders.text import parse_text
 from app.ingestion.chunking.splitter import chunk_text
 
-logfire.configure(service_name="enterprise-ingestion-service")
-
 # Local folder where parsed + chunked JSON metadata is saved (replaces GCS processed bucket)
 PROCESSED_DATA_DIR = "processed_data"
 
-# Initialize Qdrant Client
-qdrant_client = QdrantClient(
-    url=settings.QDRANT_URL,
-    api_key=settings.QDRANT_API_KEY,
-)
+@lru_cache(maxsize=1)
+def get_qdrant_client() -> QdrantClient:
+    if not settings.qdrant_url:
+        raise RuntimeError("QDRANT_CLUSTER_ENDPOINT is required for ingestion")
+    return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=30)
 
 
 def save_processed_locally(data: dict, source_type: str, filename: str) -> str:
     """Save parsed chunk metadata as JSON in processed_data/<source_type>/."""
+    if source_type in {".", ".."} or not source_type or os.path.basename(source_type) != source_type:
+        raise ValueError("source_type must be a single path component")
+    filename = os.path.basename(filename)
     folder = os.path.join(PROCESSED_DATA_DIR, source_type)
     os.makedirs(folder, exist_ok=True)
     dest = os.path.join(folder, f"{filename}.json")
@@ -36,7 +38,7 @@ def save_processed_locally(data: dict, source_type: str, filename: str) -> str:
     return dest
 
 
-def process_file(file_path: str, filename: str, source_type: str):
+def process_file(file_path: str, filename: str, source_type: str) -> bool:
     """Parse → chunk → save locally → embed → index in Qdrant."""
     with logfire.span("Processing File", file=filename, source=source_type):
         try:
@@ -53,16 +55,16 @@ def process_file(file_path: str, filename: str, source_type: str):
                 full_text = parse_office(file_path)
             else:
                 logfire.warning(f"Skipping unsupported file type: {filename}")
-                return
+                return False
 
             if not full_text or not full_text.strip():
                 logfire.warning(f"No text extracted from {filename} — skipping.")
-                return
+                return False
 
             # 2. Chunk text
             chunks = chunk_text(full_text)
             if not chunks:
-                return
+                return False
 
             # 3. Save processed metadata locally
             processed_data = {
@@ -76,6 +78,8 @@ def process_file(file_path: str, filename: str, source_type: str):
             # 4. Embed and index in Qdrant
             with logfire.span("Vectorizing & Indexing"):
                 embeddings = embed_texts(chunks)
+                if len(embeddings) != len(chunks):
+                    raise RuntimeError("Embedding count does not match document chunk count")
                 points = [
                     models.PointStruct(
                         id=str(uuid.uuid4()),
@@ -89,23 +93,29 @@ def process_file(file_path: str, filename: str, source_type: str):
                     for chunk, vector in zip(chunks, embeddings)
                 ]
 
-                qdrant_client.upsert(
-                    collection_name=settings.QDRANT_COLLECTION,
+                get_qdrant_client().upsert(
+                    collection_name=settings.qdrant_collection,
                     points=points,
                 )
                 logfire.info(f"Indexed {len(points)} points to Qdrant from {filename}.")
+                return True
 
         except Exception as e:
-            logfire.error(f"Failed to process {filename}: {e}")
+            logfire.error("File processing failed", filename=filename, error_type=type(e).__name__)
+            return False
 
 
-def process_directory(dir_path: str, source_type: str):
+def process_directory(dir_path: str, source_type: str) -> None:
     """Process every file in a directory."""
     with logfire.span("Scanning Directory", path=dir_path, source=source_type):
         files = [f for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))]
         logfire.info(f"Found {len(files)} files in {dir_path}.")
+        failures = 0
         for filename in files:
-            process_file(os.path.join(dir_path, filename), filename, source_type)
+            if not process_file(os.path.join(dir_path, filename), filename, source_type):
+                failures += 1
+        if failures:
+            raise RuntimeError(f"{failures} of {len(files)} files failed or were skipped")
 
 
 def run_universal_ingestion(base_dir: str, explicit_source_type: str = None, wipe: bool = False):
@@ -118,22 +128,24 @@ def run_universal_ingestion(base_dir: str, explicit_source_type: str = None, wip
         # Wipe collection if requested
         if wipe:
             with logfire.span("Wiping Collection"):
-                if qdrant_client.collection_exists(settings.QDRANT_COLLECTION):
-                    qdrant_client.delete_collection(settings.QDRANT_COLLECTION)
-                    logfire.info(f"Collection '{settings.QDRANT_COLLECTION}' deleted.")
+                client = get_qdrant_client()
+                if client.collection_exists(settings.qdrant_collection):
+                    client.delete_collection(settings.qdrant_collection)
+                    logfire.info("Qdrant collection deleted", collection=settings.qdrant_collection)
 
         # Recreate collection — dimension resolved at runtime after embedding model probe
-        if not qdrant_client.collection_exists(settings.QDRANT_COLLECTION):
+        client = get_qdrant_client()
+        if not client.collection_exists(settings.qdrant_collection):
             dim = get_embedding_dim()
-            qdrant_client.create_collection(
-                collection_name=settings.QDRANT_COLLECTION,
+            client.create_collection(
+                collection_name=settings.qdrant_collection,
                 vectors_config=models.VectorParams(
                     size=dim,
                     distance=models.Distance.COSINE,
                 ),
             )
             logfire.info(
-                f"Created collection '{settings.QDRANT_COLLECTION}' "
+                f"Created collection '{settings.qdrant_collection}' "
                 f"({dim}-dim, Cosine)."
             )
 
@@ -179,5 +191,6 @@ if __name__ == "__main__":
         print(f"Error: path '{target_dir}' does not exist.")
         sys.exit(1)
 
+    logfire.configure(token=settings.logfire_token, service_name="enterprise-ingestion-service")
     run_universal_ingestion(target_dir, explicit_source_type=explicit_type, wipe=wipe_requested)
     logfire.info("Ingestion job completed.")

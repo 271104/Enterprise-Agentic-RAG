@@ -1,12 +1,9 @@
 import logfire
-from langchain_groq import ChatGroq
-from nemoguardrails import RailsConfig, LLMRails
-
 from app.config import settings
 from app.guardrails.colang_rules import COLANG_CONTENT, YAML_CONTENT, RAIL_INDICATORS
 
 
-_rails: LLMRails | None = None
+_rails = None
 
 
 def initialize_rails() -> None:
@@ -17,8 +14,11 @@ def initialize_rails() -> None:
     """
     global _rails
 
+    from langchain_groq import ChatGroq
+    from nemoguardrails import LLMRails, RailsConfig
+
     guard_llm = ChatGroq(
-        api_key=settings.GROQ_API_KEY,
+        api_key=settings.groq_api_key,
         model="llama-3.1-8b-instant",
         temperature=0
     )

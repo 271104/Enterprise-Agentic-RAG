@@ -1,30 +1,47 @@
-from typing import List
+"""Paragraph-aware text chunking with a strict character limit."""
+
 import logfire
 
-def chunk_text(text: str, chunk_size: int = 1500) -> List[str]:
-    """
-    Simple semantic-ish chunker that splits by paragraphs.
-    Ensures chunks do not exceed the specified size.
-    """
-    with logfire.span("✂️ Text Chunking", text_length=len(text)):
-        if not text.strip(): 
-            return []
-            
-        paragraphs = text.split("\n\n")
-        chunks = []
-        current_chunk = ""
-        
-        for p in paragraphs:
-            if len(current_chunk) + len(p) < chunk_size:
-                current_chunk += p + "\n\n"
-            else:
-                if current_chunk.strip():
-                    chunks.append(current_chunk.strip())
-                current_chunk = p + "\n\n"
-        
-        if current_chunk.strip():
-            chunks.append(current_chunk.strip())
-            
-        valid_chunks = [c for c in chunks if c.strip()]
-        logfire.info(f"✅ Generated {len(valid_chunks)} chunks")
-        return valid_chunks
+
+def _split_oversized_paragraph(paragraph: str, chunk_size: int) -> list[str]:
+    """Split long paragraphs at whitespace while keeping every piece bounded."""
+    pieces: list[str] = []
+    remaining = paragraph
+    while len(remaining) > chunk_size:
+        boundary = remaining.rfind(" ", 0, chunk_size + 1)
+        if boundary <= 0:
+            boundary = chunk_size
+        pieces.append(remaining[:boundary].strip())
+        remaining = remaining[boundary:].strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
+
+
+def chunk_text(text: str, chunk_size: int = 1500) -> list[str]:
+    """Split text into non-empty chunks no longer than ``chunk_size`` chars."""
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be positive")
+    if not text or not text.strip():
+        return []
+
+    with logfire.span("Text chunking", text_length=len(text), chunk_size=chunk_size):
+        paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+        chunks: list[str] = []
+        current = ""
+
+        for paragraph in paragraphs:
+            parts = _split_oversized_paragraph(paragraph, chunk_size)
+            for part in parts:
+                candidate = f"{current}\n\n{part}" if current else part
+                if len(candidate) <= chunk_size:
+                    current = candidate
+                else:
+                    if current:
+                        chunks.append(current)
+                    current = part
+
+        if current:
+            chunks.append(current)
+        logfire.info("Text chunks generated", count=len(chunks))
+        return chunks

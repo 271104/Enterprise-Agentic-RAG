@@ -32,6 +32,10 @@ index.faiss
 metadata.pkl
 
 # Data
+# These patterns prevent new files; already tracked corpus files must be
+# explicitly removed from the Git index before a public release.
+/processed_data/
+/DATA/true_data/
 
 
 # IDEs

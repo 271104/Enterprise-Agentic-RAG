@@ -1,102 +1,84 @@
+"""Text embeddings with an explicit, collection-compatible provider choice."""
+
 import time
+
 import logfire
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
 from app.config import settings
 
 BATCH_SIZE = 50
-_GEMINI_DIM = 3072
-_FALLBACK_DIM = 768  # all-mpnet-base-v2
-
+_DIMENSIONS = {"gemini": 3072, "local": 768}
 _active_model = None
-_model_type: str | None = None  # "gemini" or "fallback"
-
-
-# ── Model initialisation ───────────────────────────────────────────────────────
-
-def _probe_gemini():
-    """Try one embed call to verify Gemini is reachable. Returns model or None."""
-    try:
-        model = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-2-preview",
-            google_api_key=settings.GEMINI_API_KEY,
-        )
-        model.embed_query("probe")
-        logfire.info("Gemini embeddings ready (gemini-embedding-2-preview, 3072-dim).")
-        return model
-    except Exception as e:
-        logfire.warning(f"Gemini probe failed: {e}. Will use sentence-transformers fallback.")
-        return None
-
-
-def _load_fallback():
-    from sentence_transformers import SentenceTransformer
-    logfire.info("Loading sentence-transformers fallback (all-mpnet-base-v2, 768-dim).")
-    return SentenceTransformer("all-mpnet-base-v2")
 
 
 def _init():
-    """Initialise embedding model once per process. Called lazily on first use."""
-    global _active_model, _model_type
+    global _active_model
     if _active_model is not None:
-        return
+        return _active_model
+    provider = settings.embedding_provider
+    if provider not in _DIMENSIONS:
+        raise ValueError("EMBEDDING_PROVIDER must be 'gemini' or 'local'")
 
-    gemini = _probe_gemini()
-    if gemini:
-        _active_model = gemini
-        _model_type = "gemini"
+    if provider == "gemini":
+        if not settings.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is required when EMBEDDING_PROVIDER=gemini")
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+        _active_model = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-2-preview",
+            google_api_key=settings.gemini_api_key,
+        )
     else:
-        _active_model = _load_fallback()
-        _model_type = "fallback"
+        from sentence_transformers import SentenceTransformer
 
+        _active_model = SentenceTransformer("all-mpnet-base-v2")
+    logfire.info("Embedding provider initialized", provider=provider)
+    return _active_model
 
-# ── Public helpers ─────────────────────────────────────────────────────────────
 
 def get_embedding_dim() -> int:
-    """Return the vector dimension for the active model. Call after _init()."""
-    _init()
-    return _GEMINI_DIM if _model_type == "gemini" else _FALLBACK_DIM
+    """Return the configured vector dimension without making a network call."""
+    try:
+        return _DIMENSIONS[settings.embedding_provider]
+    except KeyError as exc:
+        raise ValueError("EMBEDDING_PROVIDER must be 'gemini' or 'local'") from exc
 
-
-# ── Batch embedding with retry ─────────────────────────────────────────────────
 
 def _embed_batch(batch: list[str]) -> list[list[float]]:
-    if _model_type == "gemini":
-        # Exponential backoff: 1 s → 2 s → 4 s → 8 s (4 attempts total)
-        for attempt in range(4):
-            try:
-                return _active_model.embed_documents(batch)
-            except Exception as e:
-                err = str(e).lower()
-                is_rate_limit = any(x in err for x in ("429", "rate", "quota", "resource_exhausted"))
-                if is_rate_limit and attempt < 3:
-                    wait = 2 ** attempt
-                    logfire.warning(
-                        f"Gemini rate limit hit — retrying in {wait}s "
-                        f"(attempt {attempt + 1}/4)."
-                    )
-                    time.sleep(wait)
-                else:
-                    logfire.error(f"Gemini embedding failed: {e}")
-                    raise
-        raise RuntimeError("Gemini rate limit persisted after 4 attempts.")
-    else:
-        return _active_model.encode(batch, show_progress_bar=False).tolist()
+    model = _init()
+    if settings.embedding_provider == "local":
+        return model.encode(batch, show_progress_bar=False).tolist()
 
+    for attempt in range(4):
+        try:
+            return model.embed_documents(batch)
+        except Exception as exc:
+            message = str(exc).lower()
+            retryable = any(
+                marker in message
+                for marker in ("429", "rate", "quota", "resource_exhausted")
+            )
+            if not retryable or attempt == 3:
+                raise
+            delay = 2**attempt
+            logfire.warning("Embedding rate limit; retrying", delay_seconds=delay)
+            time.sleep(delay)
+    raise RuntimeError("Embedding retry limit exceeded")
 
-# ── Public API (same signatures as before) ─────────────────────────────────────
 
 def embed_query(query: str) -> list[float]:
-    _init()
-    if _model_type == "gemini":
-        return _active_model.embed_query(query)
-    return _active_model.encode([query])[0].tolist()
+    model = _init()
+    if settings.embedding_provider == "local":
+        return model.encode([query])[0].tolist()
+    return model.embed_query(query)
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     _init()
-    all_embeddings: list[list[float]] = []
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i : i + BATCH_SIZE]
-        with logfire.span("Embed batch", model=_model_type, start=i, size=len(batch)):
-            all_embeddings.extend(_embed_batch(batch))
-    return all_embeddings
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), BATCH_SIZE):
+        with logfire.span(
+            "Embed batch", provider=settings.embedding_provider, start=start
+        ):
+            vectors.extend(_embed_batch(texts[start : start + BATCH_SIZE]))
+    return vectors

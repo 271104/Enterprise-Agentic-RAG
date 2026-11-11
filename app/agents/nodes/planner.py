@@ -3,7 +3,7 @@ from app.gateway import get_langchain_llm
 import logfire
 
 # Portkey-backed LLM: fallback + cache + retry — same .invoke() interface as ChatGroq
-llm = get_langchain_llm(feature="planner")
+_llm = None
 
 def planner_node(state: AgentState):
     """
@@ -33,10 +33,14 @@ def planner_node(state: AgentState):
     
     Output ONLY 'CONVERSATIONAL' or the search query.
     """
+
+    global _llm
+    if _llm is None:
+        _llm = get_langchain_llm(feature="planner")
     
     with logfire.span("🧠 Planner Decision"):
-        decision = llm.invoke(prompt).content.strip()
-        logfire.info(f"Intent identified: {decision}")
+        decision = _llm.invoke(prompt).content.strip()
+        logfire.info("Intent classified", conversational=decision == "CONVERSATIONAL")
     
     if decision == "CONVERSATIONAL":
         return {

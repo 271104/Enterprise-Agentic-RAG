@@ -17,13 +17,13 @@ GATEWAY_CONFIG = {
         "on_status_codes": [429, 503]
     },
     "targets": [
-        {"override_params": {"model": f"@{settings.GROQ_SLUG}/llama-3.3-70b-versatile"}},
-        {"override_params": {"model": f"@{settings.GROQ_SLUG_2}/llama-3.1-8b-instant"}},
+        {"override_params": {"model": f"@{settings.groq_slug}/llama-3.3-70b-versatile"}},
+        {"override_params": {"model": f"@{settings.groq_slug_2}/llama-3.1-8b-instant"}},
     ]
 }
 
 portkey_client = Portkey(
-    api_key=settings.PORTKEY_API_KEY,
+    api_key=settings.portkey_api_key,
     config=GATEWAY_CONFIG
 )
 
@@ -40,12 +40,12 @@ def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
       does not understand it. You are still using Groq models; Portkey is just in the middle.
     """
     return ChatOpenAI(
-        api_key=settings.PORTKEY_API_KEY,
+        api_key=settings.portkey_api_key,
         base_url=PORTKEY_GATEWAY_URL,
-        model=f"@{settings.GROQ_SLUG}/llama-3.3-70b-versatile",
+        model=f"@{settings.groq_slug}/llama-3.3-70b-versatile",
         temperature=0,
         default_headers=createHeaders(
-            api_key=settings.PORTKEY_API_KEY,
+            api_key=settings.portkey_api_key,
             config=GATEWAY_CONFIG,
             metadata={
                 "feature": feature,

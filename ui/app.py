@@ -73,7 +73,7 @@ for message in st.session_state.messages:
 # Chat Input
 if prompt := st.chat_input("Ask about your documentation..."):
     # START TRACE: User Interaction
-    with logfire.span("💬 User Chat Interaction", user_query=prompt, session_id=st.session_state.session_id):
+    with logfire.span("💬 User Chat Interaction", session_id=st.session_state.session_id):
         
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar=USER_AVATAR):
@@ -90,6 +90,7 @@ if prompt := st.chat_input("Ask about your documentation..."):
                         url = f"{base_url}/query"
                         payload = {"q": prompt, "thread_id": st.session_state.session_id}
                         response = requests.post(url, json=payload, timeout=60)
+                        response.raise_for_status()
                         data = response.json()
                     
                     # Show Reasoning Steps from Backend

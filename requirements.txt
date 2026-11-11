@@ -9,11 +9,9 @@ python-dotenv               # For loading configuration from .env files
 requests                    # HTTP library for internal/external API calls
 streamlit                   # Frontend dashboard for the chat interface
 numpy                       # Numerical processing
-pytz                        # Timezone handling for logs
 nest-asyncio                # Support for nested async loops in notebooks/streamlit
 
 # --- GEMINI EMBEDDINGS ---
-google-generativeai         # Gemini API — embeddings (text-embedding-004 / gemini-embedding-001)
 langchain-google-genai      # LangChain integration for Gemini models
 
 # --- VECTOR DB & RETRIEVAL ---
@@ -40,7 +38,6 @@ pdfplumber                  # Fallback PDF parser for scanned/complex layouts
 # --- OBSERVABILITY & DISTRIBUTED TRACING ---
 langsmith                   # Specialized tracing for LangChain/LangGraph
 logfire[fastapi,requests]   # Pydantic Logfire — FastAPI + requests instrumentation
-loguru                      # Enhanced logging for Python
 
 # --- GUARDRAILS ---
 nemoguardrails              # NVIDIA NeMo Guardrails for input/output safety rails
@@ -51,11 +48,14 @@ portkey-ai                  # Portkey Gateway for unified LLM routing, fallbacks
 
 # --- EVALUATION (EVALS) ---
 ragas                       # RAG-specific evaluation metrics (Faithfulness, Relevancy, Recall)
-deepeval                    # Pytest-compatible test runner wrapping RAGAS & safety metrics
-langfuse                    # Live production monitoring, tracing & user feedback collection
 
 # --- EMBEDDINGS (SENTENCE TRANSFORMERS) ---
 sentence-transformers       # Used by FlashRank reranker internally
-langchain_google_genai
-
 langchain-google-vertexai
+
+# Development and evaluation tooling
+pytest
+pytest-cov
+ruff
+pip-audit
+bandit

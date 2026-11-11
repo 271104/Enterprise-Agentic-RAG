@@ -38,7 +38,9 @@ with st.sidebar:
     st.title("🧠 Agent OS")
     st.markdown("---")
 
-    base_url = "http://localhost:8000"
+    base_url = st.secrets.get(
+        "BACKEND_URL", os.getenv("BACKEND_URL", "http://localhost:8000")
+    )
 
     st.markdown("---")
     st.success(f"Logfire: {LOGFIRE_STATUS}")
@@ -62,7 +64,7 @@ for message in st.session_state.messages:
 # Chat Input
 if prompt := st.chat_input("Ask about your documentation..."):
     # START TRACE: User Interaction
-    with logfire.span("💬 User Chat Interaction", user_query=prompt, session_id=st.session_state.session_id):
+    with logfire.span("💬 User Chat Interaction", session_id=st.session_state.session_id):
         
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar=USER_AVATAR):
@@ -79,7 +81,7 @@ if prompt := st.chat_input("Ask about your documentation..."):
                         response = requests.post(url, json=payload, timeout=60)
 
                         if response.status_code != 200:
-                            st.error(f"Backend Error: {response.status_code} - {response.text}")
+                            st.error(f"Backend returned HTTP {response.status_code}.")
                             st.stop()
 
                         data = response.json()
